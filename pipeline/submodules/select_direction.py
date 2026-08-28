@@ -19,10 +19,8 @@ def refusal_score(
     refusal_toks: Int[Tensor, 'batch seq'],
     epsilon: Float = 1e-8,
 ):
-    logits = logits.to(torch.float64)
-
-    # we only care about the last tok position
-    logits = logits[:, -1, :]
+    # we only care about the last tok position (compute on cpu: MPS lacks fp64)
+    logits = logits[:, -1, :].cpu().to(torch.float64)
 
     probs = torch.nn.functional.softmax(logits, dim=-1)
     refusal_probs = probs[:, refusal_toks].sum(dim=-1)
@@ -76,31 +74,68 @@ def plot_refusal_scores(
     artifact_name: str,
 ):
     n_pos, n_layer = refusal_scores.shape
+    if len(token_labels) != n_pos:
+        raise ValueError(
+            f"Expected {n_pos} token labels for the plotted positions, "
+            f"received {len(token_labels)}"
+        )
 
-    # Create a figure and an axis
-    fig, ax = plt.subplots(figsize=(9, 5))  # width and height in inches
+    fig, ax = plt.subplots(figsize=(11, 5.5))
 
-    # Add a trace for each position to extract
-    for i in range(-n_pos, 0):
+    for row, (position, token_label) in enumerate(
+        zip(range(-n_pos, 0), token_labels)
+    ):
         ax.plot(
             list(range(n_layer)),
-            refusal_scores[i].cpu().numpy(),
-            label=f'{i}: {repr(token_labels[i])}'
+            refusal_scores[row].cpu().numpy(),
+            label=f"{position}: {token_label}",
         )
 
     if baseline_refusal_score is not None:
-        # Add a horizontal line for the baseline
-        ax.axhline(y=baseline_refusal_score, color='black', linestyle='--')
-        ax.annotate('Baseline', xy=(1, baseline_refusal_score), xytext=(8, 10), 
-                    xycoords=('axes fraction', 'data'), textcoords='offset points',
-                    horizontalalignment='right', verticalalignment='center')
+        ax.axhline(y=baseline_refusal_score, color="black", linestyle="--")
+        ax.annotate(
+            "Baseline",
+            xy=(1, baseline_refusal_score),
+            xytext=(-6, 8),
+            xycoords=("axes fraction", "data"),
+            textcoords="offset points",
+            horizontalalignment="right",
+            verticalalignment="bottom",
+        )
 
     ax.set_title(title)
-    ax.set_xlabel('Layer source of direction (resid_pre)')
-    ax.set_ylabel('Refusal score')
-    ax.legend(title='Position source of direction', loc='lower left')
+    ax.set_xlabel("Layer source of direction (resid_pre)")
+    ax.set_ylabel("Refusal score")
+    ax.legend(
+        title="Source position and token",
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        frameon=False,
+    )
 
-    plt.savefig(f"{artifact_dir}/{artifact_name}.png")
+    fig.tight_layout()
+    fig.savefig(f"{artifact_dir}/{artifact_name}.png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
+def format_token_labels(tokenizer, token_ids: List[int]) -> List[str]:
+    """Decode individual token IDs into compact, visible plot labels."""
+    whitespace_labels = {
+        " ": "space",
+        "\n": "newline",
+        "\n\n": "double newline",
+        "\t": "tab",
+    }
+
+    labels = []
+    for token_id in token_ids:
+        decoded = tokenizer.decode(
+            [int(token_id)],
+            clean_up_tokenization_spaces=False,
+        )
+        labels.append(whitespace_labels.get(decoded, decoded or "empty token"))
+
+    return labels
 
 # returns True if the direction should be filtered out
 def filter_fn(refusal_score, steering_score, kl_div_score, layer, n_layer, kl_threshold=None, induce_refusal_threshold=None, prune_layer_percentage=0.20) -> bool:
@@ -133,9 +168,9 @@ def select_direction(
     baseline_refusal_scores_harmful = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_hooks=[], batch_size=batch_size)
     baseline_refusal_scores_harmless = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_hooks=[], batch_size=batch_size)
 
-    ablation_kl_div_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
-    ablation_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
-    steering_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
+    ablation_kl_div_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float32)
+    ablation_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float32)
+    steering_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float32)
 
     baseline_harmless_logits = get_last_position_logits(
         model=model_base.model,
@@ -190,10 +225,12 @@ def select_direction(
             refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
+    token_labels = format_token_labels(model_base.tokenizer, model_base.eoi_toks)
+
     plot_refusal_scores(
         refusal_scores=ablation_refusal_scores,
         baseline_refusal_score=baseline_refusal_scores_harmful.mean().item(),
-        token_labels=model_base.tokenizer.batch_decode(model_base.eoi_toks),
+        token_labels=token_labels,
         title='Ablating direction on harmful instructions',
         artifact_dir=artifact_dir,
         artifact_name='ablation_scores'
@@ -202,7 +239,7 @@ def select_direction(
     plot_refusal_scores(
         refusal_scores=steering_refusal_scores,
         baseline_refusal_score=baseline_refusal_scores_harmless.mean().item(),
-        token_labels=model_base.tokenizer.batch_decode(model_base.eoi_toks),
+        token_labels=token_labels,
         title='Adding direction on harmless instructions',
         artifact_dir=artifact_dir,
         artifact_name='actadd_scores'
@@ -211,8 +248,8 @@ def select_direction(
     plot_refusal_scores(
         refusal_scores=ablation_kl_div_scores,
         baseline_refusal_score=0.0,
-        token_labels=model_base.tokenizer.batch_decode(model_base.eoi_toks),
-        title='KL Divergence when ablating direction on harmless instructions',
+        token_labels=token_labels,
+        title='KL divergence when ablating direction on harmless instructions',
         artifact_dir=artifact_dir,
         artifact_name='kl_div_scores'
     )
@@ -312,8 +349,8 @@ def kl_div_fn(
     """
     Compute the KL divergence loss between two tensors of logits.
     """
-    logits_a = logits_a.to(torch.float64)
-    logits_b = logits_b.to(torch.float64)
+    logits_a = logits_a.cpu().to(torch.float64)
+    logits_b = logits_b.cpu().to(torch.float64)
 
     probs_a = logits_a.softmax(dim=-1)
     probs_b = logits_b.softmax(dim=-1)

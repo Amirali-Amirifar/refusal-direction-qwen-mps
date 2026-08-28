@@ -128,14 +128,14 @@ def evaluate_loss_for_datasets(cfg, model_base, fwd_pre_hooks, fwd_hooks, interv
 
     on_distribution_completions_file_path = os.path.join(cfg.artifact_path(), f'completions/harmless_baseline_completions.json')
 
-    loss_evals = evaluate_loss(model_base, fwd_pre_hooks, fwd_hooks, batch_size=cfg.ce_loss_batch_size, n_batches=cfg.ce_loss_n_batches, completions_file_path=on_distribution_completions_file_path)
+    loss_evals = evaluate_loss(model_base, fwd_pre_hooks, fwd_hooks, batch_size=cfg.ce_loss_batch_size, n_batches=cfg.ce_loss_n_batches, completions_file_path=on_distribution_completions_file_path, dataset_labels=cfg.ce_loss_datasets)
 
     with open(f'{cfg.artifact_path()}/loss_evals/{intervention_label}_loss_eval.json', "w") as f:
         json.dump(loss_evals, f, indent=4)
 
 def run_pipeline(model_path):
     """Run the full pipeline."""
-    model_alias = os.path.basename(model_path)
+    model_alias = os.path.basename(model_path).lower()
     cfg = Config(model_alias=model_alias, model_path=model_path)
 
     model_base = construct_model_base(cfg.model_path)

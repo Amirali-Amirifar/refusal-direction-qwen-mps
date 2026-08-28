@@ -16,15 +16,13 @@ def get_mean_activations_pre_hook(layer, cache: Float[Tensor, "pos layer d_model
     return hook_fn
 
 def get_mean_activations(model, tokenizer, instructions, tokenize_instructions_fn, block_modules: List[torch.nn.Module], batch_size=32, positions=[-1]):
-    torch.cuda.empty_cache()
-
     n_positions = len(positions)
     n_layers = model.config.num_hidden_layers
     n_samples = len(instructions)
     d_model = model.config.hidden_size
 
-    # we store the mean activations in high-precision to avoid numerical issues
-    mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float64, device=model.device)
+    # MPS has no FP64 support, so activations are accumulated on-device in FP32.
+    mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float32, device=model.device)
 
     fwd_pre_hooks = [(block_modules[layer], get_mean_activations_pre_hook(layer=layer, cache=mean_activations, n_samples=n_samples, positions=positions)) for layer in range(n_layers)]
 
@@ -43,7 +41,8 @@ def get_mean_diff(model, tokenizer, harmful_instructions, harmless_instructions,
     mean_activations_harmful = get_mean_activations(model, tokenizer, harmful_instructions, tokenize_instructions_fn, block_modules, batch_size=batch_size, positions=positions)
     mean_activations_harmless = get_mean_activations(model, tokenizer, harmless_instructions, tokenize_instructions_fn, block_modules, batch_size=batch_size, positions=positions)
 
-    mean_diff: Float[Tensor, "n_positions n_layers d_model"] = mean_activations_harmful - mean_activations_harmless
+    # Subtract in FP32 on-device, then store the candidate directions as CPU FP64.
+    mean_diff: Float[Tensor, "n_positions n_layers d_model"] = (mean_activations_harmful - mean_activations_harmless).cpu().double()
 
     return mean_diff
 

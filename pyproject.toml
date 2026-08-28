@@ -1,0 +1,30 @@
+[project]
+name = "refusal-direction-qwen-mps"
+version = "1.0.0"
+description = "A local Apple Silicon reproduction of refusal-direction interventions on Qwen3.5-0.8B"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Amirali Amirifar", email = "amirali.amirifar@gmail.com" },
+]
+requires-python = "==3.11.*"
+dependencies = [
+    "datasets>=3,<6",
+    "einops>=0.7,<1",
+    "jaxtyping>=0.2,<1",
+    "matplotlib>=3.8,<4",
+    "numpy>=1.26,<3",
+    "pillow>=10,<13",
+    "sentencepiece>=0.2,<1",
+    "torch>=2.5,<3",
+    "torchvision>=0.20,<1",
+    "tqdm>=4.66,<5",
+    "transformers>=5,<6",
+]
+
+[project.urls]
+Repository = "https://github.com/Amirali-Amirifar/refusal-direction-qwen-mps"
+"Original implementation" = "https://github.com/andyrdt/refusal_direction"
+
+[tool.uv]
+package = false

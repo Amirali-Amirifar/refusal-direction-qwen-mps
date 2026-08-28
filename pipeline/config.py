@@ -15,10 +15,12 @@ class Config:
     filter_val: bool = True
     evaluation_datasets: Tuple[str] = ("jailbreakbench",)
     max_new_tokens: int = 512
-    jailbreak_eval_methodologies: Tuple[str] = ("substring_matching", "llamaguard2")
+    jailbreak_eval_methodologies: Tuple[str] = ("substring_matching",)
     refusal_eval_methodologies: Tuple[str] = ("substring_matching",)
     ce_loss_batch_size: int = 2
     ce_loss_n_batches: int = 2048
+    # Keep the default run local by evaluating the generated harmless completions.
+    ce_loss_datasets: Tuple[str, ...] = ("alpaca_custom_completions",)
 
     def artifact_path(self) -> str:
         return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias)

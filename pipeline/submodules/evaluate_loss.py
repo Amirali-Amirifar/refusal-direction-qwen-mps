@@ -21,17 +21,27 @@ def batch_iterator_chat_completions(dataset_instructions, dataset_outputs, token
         loss_mask[:, -1] = 0 # loss should not be computed for last token position
 
         # also mask out all tokens before the eoi token region
+        eoi_len = eoi_toks.shape[0]
+        seq_len = inputs["input_ids"].shape[1]
         for b in range(inputs["input_ids"].shape[0]):
-            for i in range(inputs["input_ids"].shape[1]):
+            boundary_found = False
+            for i in range(seq_len - eoi_len + 1):
 
-                if torch.all(inputs["input_ids"][b, i:i+eoi_toks.shape[0]] == eoi_toks):
-                    loss_mask[b, :i + eoi_toks.shape[0] - 1] = 0
+                if torch.all(inputs["input_ids"][b, i : i + eoi_len] == eoi_toks):
+                    loss_mask[b, :i + eoi_len - 1] = 0
+                    boundary_found = True
                     break
 
                 # normally the above condition works. but the tokenization instruction tokens in Llama2 is not clean, and so we need this hack
                 if eoi_toks.shape[0] == 6 and (inputs["input_ids"][b, i:i+eoi_toks.shape[0]] == eoi_toks).sum().item() >= eoi_toks.shape[0] - 2:
                     loss_mask[b, :i + eoi_toks.shape[0] - 1] = 0
+                    boundary_found = True
                     break
+
+            if not boundary_found:
+                raise ValueError(
+                    "Assistant boundary was not found while building the CE-loss mask"
+                )
 
         yield inputs, loss_mask 
 
@@ -80,7 +90,8 @@ def batch_iterator_pile(tokenizer, batch_size, max_length):
         yield inputs, loss_mask
 
 def compute_loss_over_dataset(model, tokenizer, batch_iterator, n_batches=256, fwd_pre_hooks=[], fwd_hooks=[]):
-    accumulated_loss = torch.tensor(0, dtype=torch.float64, device=model.device)
+    # MPS does not support the original FP64 accumulator.
+    accumulated_loss = torch.tensor(0, dtype=torch.float32, device=model.device)
     accumulated_n_tokens = torch.tensor(0, dtype=torch.int64, device=model.device)
 
     batch_idx = 0
